@@ -4,41 +4,48 @@
 #include <getopt.h>
 #include <errno.h>
 #include <string.h>
+#include <signal.h>
 
-// TODO
-// Follow option
 
 typedef struct {
  char** buf;
  int len;
 } BUF;
 
+char *line = NULL;
+FILE *f = NULL;
+
+void signal_callback_handler(int signum) {
+   if ( line != NULL) free(line);
+   if ( f != NULL) fclose(f);
+   exit(signum);
+}
 
 void usage() {
   fputs("Usage: utail [-n/--lines] [-h/--help] [FILE]\n\n", stdout);
 }
 
-int readlines(FILE *f, long lines) {
-  char *line = NULL;
+int readlines(FILE *f, long lines, bool follow) {
   size_t len = 0;
   ssize_t nread;
+  int exit_code = 0;
 
   while (lines > 0) {
     nread = getline(&line, &len, f);    
-    if (nread != -1) {
-      printf("%s", line);
+    if (nread == -1) {
+      exit_code = 1;
+      break;
     }
+    printf("%s", line);
     lines--;
   }
 
-  free(line);
-  fclose(f);
-  return 0;
+  return exit_code;
 }
 
 FILE* rewind_lines(char* fname, int lines) {
   int n_eol = 0, c;
-  FILE *f = fopen(fname, "r");
+  f = fopen(fname, "r");
 
   fseek(f, -1, SEEK_END);
 
@@ -72,7 +79,6 @@ BUF read_stdin() {
 
   BUF res = {.buf = buffer, .len = c_lines};
   return res;
-
 }
 
 int print_buffer(BUF buf, int lines) {
@@ -83,7 +89,27 @@ int print_buffer(BUF buf, int lines) {
   return 0;
 }
 
+void follow_stream(FILE* f) {
+  size_t len = 0;
+  ssize_t nread;
+  long cur;
+  if ( f != stdin ) cur = ftell(f);
+
+  while (1==1) {
+    nread = getline(&line, &len, f);    
+    if (nread != -1) { 
+      printf("%s", line);
+      if ( f != stdin ) cur = ftell(f);
+    }
+    else {
+     if ( f!= stdin ) fseek(f, cur, SEEK_SET);
+    }
+  }
+}
+
 int main(int argc, char **argv){
+  signal(SIGINT, signal_callback_handler);
+
   static struct option long_options[] =
       {
         {"lines", required_argument, 0, 'n'},
@@ -96,6 +122,7 @@ int main(int argc, char **argv){
   char *endptr;
   bool follow = false;
   int exit_code = 0;
+  line = (char*)malloc(sizeof(char*) * 100);
 
   while ((c = getopt_long(argc, argv, "n:hf", long_options, NULL)) != -1) {
     switch(c) {
@@ -115,17 +142,22 @@ int main(int argc, char **argv){
     }
   }
  
-  FILE* f = NULL;
   if (argv[optind] != NULL) {
     f = rewind_lines(argv[optind], lines);
-    exit_code = readlines(f, lines);
+    exit_code = readlines(f, lines, follow);
   }
   else {
     BUF buf = read_stdin();
+    f = stdin;
     exit_code = print_buffer(buf, lines);
+
+    for(int i=0; i<buf.len; i++) free(buf.buf[i]);
+    free(buf.buf);
+  }
+
+  if (follow) {
+    follow_stream(f);
   }
 
   exit(exit_code);
-
-  
 }
